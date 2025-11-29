@@ -1,0 +1,125 @@
+name: Build & release
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    env:
+      semantic_version: 19.0.5
+      release_file: latest_release.txt
+    outputs:
+      release_version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+
+      - name: Install changelog-conventionalcommits
+        run: npm i -D conventional-changelog-conventionalcommits@9.1.0
+
+      - name: Check release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6
+        with:
+          semantic_version: ${{ env.semantic_version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save release
+        id: result
+        env:
+          new_release: ${{ steps.semantic.outputs.new_release_version }}
+          major_version: ${{ steps.semantic.outputs.new_release_major_version }}
+          minor_version: ${{ steps.semantic.outputs.new_release_minor_version }}
+        run: |
+          if [[ -z "$new_release" ]]; then
+            echo "NO_RELEASE" > ${{ env.release_file }}
+          else
+            echo "$new_release" > ${{ env.release_file }}
+          fi
+
+      - name: Upload release file
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v4
+        with:
+          name: latest_release
+          path: ${{ env.release_file }}
+
+  build:
+    name: Application build
+    runs-on: ubuntu-latest
+    needs: release
+    if: ${{ needs.release.outputs.release_version != '' }}
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+
+      - name: Build container image
+        id: build
+        env:
+          tag: ${{ needs.release.outputs.release_version }}
+        run: |
+          echo "version=${{ env.tag }}" >> "$GITHUB_OUTPUT"
+          docker build . -t image
+          docker save -o ${{ runner.temp }}/image.tar image
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v4
+        if: ${{github.event_name == 'push' || github.event_name == 'workflow_dispatch'}}
+        with:
+          name: image
+          path: ${{ runner.temp }}/image.tar
+
+  publish-application-container:
+    name: Publish application container
+    runs-on: ubuntu-latest
+    needs:
+      - release
+      - build
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.release.outputs.release_version != '' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v5
+        with:
+          name: image
+          path: ${{ runner.temp }}
+
+      - name: Load image
+        run: |
+          docker load --input ${{ runner.temp }}/image.tar
+          docker image ls -a
+
+      - name: Tag image
+        run: |
+          docker image tag image ${{ env.APP_IMAGE_REPO }}:$VERSION
+
+      - name: Log into GHCR
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Publish
+        run: |
+          docker push ${{ env.APP_IMAGE_REPO }}:$VERSION
