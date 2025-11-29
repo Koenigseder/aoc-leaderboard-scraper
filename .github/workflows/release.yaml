@@ -91,6 +91,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write
     env:
       VERSION: ${{ needs.build.outputs.version }}
     steps:
