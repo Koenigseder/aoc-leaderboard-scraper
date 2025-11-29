@@ -107,7 +107,7 @@ jobs:
 
       - name: Tag image
         run: |
-          docker image tag image ${{ env.IMAGE_NAME }}:$VERSION
+          docker image tag image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION
 
       - name: Log into GHCR
         if: steps.changed-files.outputs.any_changed == 'true'
@@ -117,9 +117,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup gcloud CLI
-        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-
       - name: Publish
         run: |
-          docker push ${{ env.IMAGE_NAME }}:$VERSION
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION
