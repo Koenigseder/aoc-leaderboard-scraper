@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -18,8 +19,12 @@ func GetHistoricScoreFile(writer http.ResponseWriter, request *http.Request) {
 	eventYear := request.PathValue("eventYear")
 	leaderboardId := request.PathValue("leaderboardId")
 
+	slog.Info(fmt.Sprintf("/getLocalScoreHistory/%s/%s", eventYear, leaderboardId))
+
 	fileContent, err := filesystem.ReadHistoricScoreFile(eventYear, leaderboardId)
 	if errors.Is(err, os.ErrNotExist) {
+		slog.Info("leaderboard not found")
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(writer).Encode(&types.Problem{
@@ -29,6 +34,8 @@ func GetHistoricScoreFile(writer http.ResponseWriter, request *http.Request) {
 
 		return
 	} else if err != nil {
+		slog.Error("failed fetching historic scores", "error", err)
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(&types.Problem{
@@ -51,10 +58,14 @@ func PersistCurrentLocalScores(writer http.ResponseWriter, request *http.Request
 	eventYear := request.PathValue("eventYear")
 	leaderboardId := request.PathValue("leaderboardId")
 
+	slog.Info(fmt.Sprintf("/persistCurrentLocalScores/%s/%s", eventYear, leaderboardId))
+
 	viewKey := request.URL.Query().Get("viewKey")
 
 	leaderboardInformation, err := getLeaderboard(eventYear, leaderboardId, viewKey)
 	if errors.Is(err, errAocUnauthorized) {
+		slog.Error("failed persisting current local scores (unauthorized)")
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(writer).Encode(&types.Problem{
@@ -63,6 +74,8 @@ func PersistCurrentLocalScores(writer http.ResponseWriter, request *http.Request
 
 		return
 	} else if err != nil {
+		slog.Error("failed fetching current leaderboard status", "error", err)
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(&types.Problem{
@@ -76,6 +89,8 @@ func PersistCurrentLocalScores(writer http.ResponseWriter, request *http.Request
 
 	err = filesystem.UpdateHistoricScoreFile(leaderboardInformation)
 	if err != nil {
+		slog.Error("failed persisting current leaderboard status", "error", err)
+
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(&types.Problem{
